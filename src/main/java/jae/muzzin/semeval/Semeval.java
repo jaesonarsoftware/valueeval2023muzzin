@@ -44,7 +44,7 @@ public class Semeval {
         //encodeDataset("arguments-training-short.tsv", "arguments-training.nd4j");
         CsvReader reader = CsvReader.builder()
                 .fieldSeparator('\t')
-                .build(new FileReader("labels-training.tsv"));
+                .build(new FileReader("labels-training-short.tsv"));
         List<float[]> d = new ArrayList<>();
         double[][] labels = reader.stream()
                 .skip(1)
@@ -123,15 +123,20 @@ public class Semeval {
         for (long i = 0; i < 20; i++) {
             System.out.println("Starting " + i);
             final long fi = i;
-            nn = initNetwork(true, (int)i, path);
+            nn = initNetwork(true, (int) i, path);
             long[] argIdsThisValueAffects = LongStream.range(0, trainLabels.length)
-                    .filter(j -> trainLabels[(int)j][(int)fi] > 0)
+                    .filter(j -> trainLabels[(int) j][(int) fi] > 0)
                     .toArray();
 
-            System.out.println("Found " + Arrays.toString(argIdsThisValueAffects));
+            System.out.println("Found " + argIdsThisValueAffects.length + " matching rows");
+            System.out.println("Training " + training.shape()[0]);
+            System.out.println("Labels " + trainLabels.length);
             DataSet trainData = new DataSet(
-                    training.get(NDArrayIndex.indices(argIdsThisValueAffects),NDArrayIndex.indices(0, 2)),
-                    training.get(NDArrayIndex.indices(argIdsThisValueAffects),NDArrayIndex.indices(1))
+                    Nd4j.concat(1,
+                            training.get(NDArrayIndex.indices(argIdsThisValueAffects), NDArrayIndex.interval(0, 768)),
+                            training.get(NDArrayIndex.indices(argIdsThisValueAffects), NDArrayIndex.point(1536))
+                    ),
+                    training.get(NDArrayIndex.indices(argIdsThisValueAffects), NDArrayIndex.interval(768, 768 * 2))
             );
             System.out.println("Got training data");
             double learningRate = 1e-3;
