@@ -3,9 +3,7 @@ package jae.muzzin.semeval;
 import com.robrua.nlp.bert.Bert;
 import java.io.File;
 import java.io.IOException;
-import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.List;
 import java.util.UUID;
 import java.util.stream.IntStream;
 import org.nd4j.autodiff.samediff.SameDiff;
@@ -15,78 +13,48 @@ import org.nd4j.evaluation.classification.Evaluation;
 import org.nd4j.linalg.api.buffer.DataType;
 import org.nd4j.linalg.api.ndarray.INDArray;
 import org.nd4j.linalg.dataset.DataSet;
-import org.nd4j.linalg.dataset.api.iterator.DataSetIterator;
 import org.nd4j.linalg.factory.Nd4j;
 import org.nd4j.linalg.learning.config.Adam;
 import org.nd4j.weightinit.impl.XavierInitScheme;
+import de.siegmar.fastcsv.reader.NamedCsvReader;
+import java.io.FileOutputStream;
+import java.io.FileReader;
+import java.util.function.IntSupplier;
 
 /**
  *
  * @author Admin
  */
 public class Semeval {
-
+    public static final int num_training_examples=985;
     public static String path = "model.fb";
-
-    public static void main(String[] args) {
-        try ( Bert bert = Bert.load("com/robrua/nlp/easy-bert/bert-uncased-L-12-H-768-A-12")) {
-            float[] embedding = bert.embedSequence("The EU should extend the model of Pooling & Sharing European military resources beyond air transport.");
-            System.out.println(Arrays.toString(embedding));
-        } catch (Exception ex) {
-            System.out.println(ex.getMessage());
-            ex.printStackTrace();
-        }
-    }
-
     
-    public static INDArray encodeDataset(String path, String writePath) {
-        try ( Bert bert = Bert.load("com/robrua/nlp/easy-bert/bert-uncased-L-12-H-768-A-12")) {
-            INDArray r = Nd4j.create(data.length, 768 * 2 + 1);
-            for (int i = 0; i < data.length; i++) {
-                System.out.println("Encoded " + data[i][0]);
-                float[] s1 = bert.embedSequence(data[i][3]);
-                float[] s2 = bert.embedSequence(data[i][1]);
-                float[] a = new float[]{data[i][2].equals("against") ? -1 : 1};
-                r.putRow(i, Nd4j.concat(0, Nd4j.create(s1), Nd4j.create(s2), Nd4j.create(a)));
-            }
-            return r;
-        } catch (Exception ex) {
-            System.out.println(ex.getMessage());
-            ex.printStackTrace();
-            throw ex;
-        }
+    public static void main(String[] args) throws IOException {
+        encodeDataset("arguments-training-short.tsv", "arguments-training.nd4j");
     }
-    //accepts rows in s2,a,s1 format
-    //returns rows in s1,s2,a format
-    public static INDArray encodeDataset(String[][] data) {
+    
+    public static void encodeDataset(String path, String writePath) throws IOException {
+        
         try ( Bert bert = Bert.load("com/robrua/nlp/easy-bert/bert-uncased-L-12-H-768-A-12")) {
-            INDArray r = Nd4j.create(data.length, 768 * 2 + 1);
-            for (int i = 0; i < data.length; i++) {
-                System.out.println("Encoded " + data[i][0]);
-                float[] s1 = bert.embedSequence(data[i][3]);
-                float[] s2 = bert.embedSequence(data[i][1]);
-                float[] a = new float[]{data[i][2].equals("against") ? -1 : 1};
-                r.putRow(i, Nd4j.concat(0, Nd4j.create(s1), Nd4j.create(s2), Nd4j.create(a)));
-            }
-            return r;
-        } catch (Exception ex) {
-            System.out.println(ex.getMessage());
-            ex.printStackTrace();
-            throw ex;
-        }
-    }
-
-    //accepts rows in s2,a,s1 format
-    //returns rows in s2 format
-    public static INDArray encodeDatasetForValueLabels(String[][] data) {
-        try ( Bert bert = Bert.load("com/robrua/nlp/easy-bert/bert-uncased-L-12-H-768-A-12")) {
-            INDArray r = Nd4j.create(data.length, 768);
-            for (int i = 0; i < data.length; i++) {
-                System.out.println("Encoded " + data[i][0]);
-                float[] s2 = bert.embedSequence(data[i][1]);
-                r.putRow(i, Nd4j.concat(0, Nd4j.create(s2)));
-            }
-            return r;
+            INDArray r = Nd4j.create(num_training_examples, 768 * 2 + 1);
+            IntSupplier jae = new IntSupplier() {
+                private int r = 0;
+                
+                @Override
+                public int getAsInt() {
+                    return r++;
+                }
+            };
+            NamedCsvReader.builder()
+                    .fieldSeparator('\t')
+                    .build(new FileReader(path)).forEach(row -> {
+                System.out.println("Encoded " + row.getField("Argument ID"));
+                float[] s1 = bert.embedSequence(row.getField("Premise"));
+                float[] s2 = bert.embedSequence(row.getField("Conclusion"));
+                float[] a = new float[]{row.getField("Stance").equals("against") ? -1 : 1};
+                r.putRow(jae.getAsInt(), Nd4j.concat(0, Nd4j.create(s1), Nd4j.create(s2), Nd4j.create(a)));
+            });
+            Nd4j.write(new FileOutputStream(writePath, true), r);
         } catch (Exception ex) {
             System.out.println(ex.getMessage());
             ex.printStackTrace();
@@ -94,33 +62,14 @@ public class Semeval {
         }
     }
 
-    //accepts rows in s2,a,s1 format
-    //returns rows in s1,a format
-    public static INDArray encodeDatasetForValues(String[][] data) {
-        try ( Bert bert = Bert.load("com/robrua/nlp/easy-bert/bert-uncased-L-12-H-768-A-12")) {
-            INDArray r = Nd4j.create(data.length, 768 * 2 + 1);
-            for (int i = 0; i < data.length; i++) {
-                System.out.println("Encoded " + data[i][0]);
-                float[] s1 = bert.embedSequence(data[i][3]);
-                float[] a = new float[]{data[i][2].equals("against") ? -1 : 1};
-                r.putRow(i, Nd4j.concat(0, Nd4j.create(s1), Nd4j.create(a)));
-            }
-            return r;
-        } catch (Exception ex) {
-            System.out.println(ex.getMessage());
-            ex.printStackTrace();
-            throw ex;
-        }
-    }
-
-    public static void trainDiscriminator(int numEpochs, String[] trainCSV, float[][] labels, String[] testCSV, float[][] testLabels) throws IOException {
+    public static void trainDiscriminator(int numEpochs, INDArray trainCSV, float[][] labels, INDArray testCSV, float[][] testLabels) throws IOException {
         SameDiff nn;
         nn = initNetwork(false, 0, path);
         DataSet trainData = new DataSet(
-                encodeDataset(Arrays.stream(trainCSV).map(row -> row.split("\\t")).toList().toArray(new String[0][])),
+                trainCSV,
                 Nd4j.create(labels));
         DataSet testData = new DataSet(
-                encodeDataset(Arrays.stream(testCSV).map(row -> row.split("\\t")).toList().toArray(new String[0][])),
+                testCSV,
                 Nd4j.create(testLabels));
         double learningRate = 1e-3;
         TrainingConfig config = new TrainingConfig.Builder()
@@ -128,7 +77,7 @@ public class Semeval {
                 .dataSetFeatureMapping("input") //DataSet features array should be associated with variable "input"
                 .dataSetLabelMapping("label") //DataSet label array should be associated with variable "label"
                 .build();
-
+        
         nn.setTrainingConfig(config);
         Evaluation evaluation = new Evaluation();
         nn.evaluate(testData.iterateWithMiniBatches(), "output", evaluation);
@@ -144,28 +93,23 @@ public class Semeval {
             }
         }
     }
-
-    public static void trainValues(int numEpochs, String[] trainCSV, float[][] trainLabels) throws IOException {
+    
+    public static void trainValues(int numEpochs, INDArray training, float[][] trainLabels) throws IOException {
         SameDiff nn;
         for (int i = 0; i < 20; i++) {
             final int fi = i;
             nn = initNetwork(true, 0, path);
             DataSet trainData = new DataSet(
-                    encodeDatasetForValues(IntStream.range(0, trainCSV.length)
-                            .filter(j -> trainLabels[j][fi] > 0)
-                            .mapToObj(j -> trainCSV[j])
-                            .map(row -> row.split("\\t")).toList().toArray(new String[0][])),
-                    encodeDatasetForValueLabels(IntStream.range(0, trainCSV.length)
-                            .filter(j -> trainLabels[j][fi] > 0)
-                            .mapToObj(j -> trainCSV[j])
-                            .map(row -> row.split("\\t")).toList().toArray(new String[0][])));
+                    training.tensorAlongDimension(0, 0, 2),
+                    training.tensorAlongDimension(0, 1)
+            );
             double learningRate = 1e-3;
             TrainingConfig config = new TrainingConfig.Builder()
                     .updater(new Adam(learningRate)) //Adam optimizer with specified learning rate
                     .dataSetFeatureMapping("input") //DataSet features array should be associated with variable "input"
                     .dataSetLabelMapping("label") //DataSet label array should be associated with variable "label"
                     .build();
-
+            
             nn.setTrainingConfig(config);
             for (int epoch = 0; epoch < numEpochs; epoch++) {
                 nn.fit(trainData);
@@ -173,15 +117,15 @@ public class Semeval {
             nn.save(new File(path), true);
         }
     }
-
+    
     public static SameDiff initNetwork(boolean trainValue, int value, String path) throws IOException {
-
+        
         SameDiff sd = SameDiff.create();
         if (!trainValue || value != 0) {
             File saveFileForInference = new File(path);
             sd = SameDiff.fromFlatFile(saveFileForInference);
         }
-
+        
         SDVariable in;
         SDVariable label;
         if (trainValue) {
@@ -195,7 +139,7 @@ public class Semeval {
         }
         SDVariable[] discrimators = new SDVariable[20];
         SDVariable[][] valueFunctions = new SDVariable[20][2];
-
+        
         for (int i = 0; i < 20; i++) {
             SDVariable s1 = sd.slice(in, new int[]{0, 768}, 1, 768);
             SDVariable s2 = sd.slice(in, new int[]{0, 0}, 1, 768);
@@ -217,7 +161,7 @@ public class Semeval {
         }
         return sd;
     }
-
+    
     public static SDVariable discriminator(String prefix, SDVariable input) {
         //s2, a, s1, v, s2*v
         SameDiff sd = input.getSameDiff();
