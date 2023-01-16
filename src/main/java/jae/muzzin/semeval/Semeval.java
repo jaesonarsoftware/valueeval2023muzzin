@@ -31,9 +31,10 @@ import java.util.function.IntSupplier;
  * @author Admin
  */
 public class Semeval {
-    public static final int num_training_examples=985;
+
+    public static final int num_training_examples = 985;
     public static String path = "model.fb";
-    
+
     public static void main(String[] args) throws IOException {
         //encodeDataset("arguments-training-short.tsv", "arguments-training.nd4j");
         CsvReader reader = CsvReader.builder()
@@ -41,21 +42,22 @@ public class Semeval {
                 .build(new FileReader("labels-training.tsv"));
         List<float[]> d = new ArrayList<>();
         double[][] labels = reader.stream()
-                .map(row -> 
-                        IntStream.range(1, 21)
-                                .mapToDouble(i -> 
-                                        Double.parseDouble(row.getField(i))).toArray()
+                .skip(1)
+                .map(row
+                        -> IntStream.range(1, 21)
+                        .mapToDouble(i
+                                -> Double.parseDouble(row.getField(i))).toArray()
                 ).toList().toArray(new double[0][]);
         trainValues(100, Nd4j.read(new FileInputStream("arguments-training.nd4j")), labels);
     }
-    
+
     public static void encodeDataset(String path, String writePath) throws IOException {
-        
+
         try ( Bert bert = Bert.load("com/robrua/nlp/easy-bert/bert-uncased-L-12-H-768-A-12")) {
             INDArray r = Nd4j.create(num_training_examples, 768 * 2 + 1);
             IntSupplier jae = new IntSupplier() {
                 private int r = 0;
-                
+
                 @Override
                 public int getAsInt() {
                     return r++;
@@ -93,7 +95,7 @@ public class Semeval {
                 .dataSetFeatureMapping("input") //DataSet features array should be associated with variable "input"
                 .dataSetLabelMapping("label") //DataSet label array should be associated with variable "label"
                 .build();
-        
+
         nn.setTrainingConfig(config);
         Evaluation evaluation = new Evaluation();
         nn.evaluate(testData.iterateWithMiniBatches(), "output", evaluation);
@@ -109,7 +111,7 @@ public class Semeval {
             }
         }
     }
-    
+
     public static void trainValues(int numEpochs, INDArray training, double[][] trainLabels) throws IOException {
         SameDiff nn;
         for (int i = 0; i < 20; i++) {
@@ -128,7 +130,7 @@ public class Semeval {
                     .dataSetFeatureMapping("input") //DataSet features array should be associated with variable "input"
                     .dataSetLabelMapping("label") //DataSet label array should be associated with variable "label"
                     .build();
-            
+
             nn.setTrainingConfig(config);
             for (int epoch = 0; epoch < numEpochs; epoch++) {
                 nn.fit(trainData);
@@ -136,15 +138,15 @@ public class Semeval {
             nn.save(new File(path), true);
         }
     }
-    
+
     public static SameDiff initNetwork(boolean trainValue, int value, String path) throws IOException {
-        
+
         SameDiff sd = SameDiff.create();
         if (!trainValue || value != 0) {
             File saveFileForInference = new File(path);
             sd = SameDiff.fromFlatFile(saveFileForInference);
         }
-        
+
         SDVariable in;
         SDVariable label;
         if (trainValue) {
@@ -158,14 +160,14 @@ public class Semeval {
         }
         SDVariable[] discrimators = new SDVariable[20];
         SDVariable[][] valueFunctions = new SDVariable[20][2];
-        
+
         for (int i = 0; i < 20; i++) {
-            SDVariable s1 = sd.slice(in, new int[]{0, 768}, 1, 768);
-            SDVariable s2 = sd.slice(in, new int[]{0, 0}, 1, 768);
-            valueFunctions[i] = valueFunction("value_" + i, s1,
-                    (trainValue && i == value) ? label : sd.constant(Nd4j.zeros(1, 768)));
+            SDVariable s1plusa = sd.concat(1, sd.slice(in, new int[]{0, 0}, 1, 768), sd.slice(in, new int[]{0, 768 * 2}, 1, 1));
+            SDVariable s2 = sd.slice(in, new int[]{0, 768}, 1, 768);
+            valueFunctions[i] = valueFunction("value_" + i, s1plusa,
+                    (trainValue && i == value) ? s2 : sd.constant(Nd4j.zeros(1, 768)));
             discrimators[i] = discriminator("d_" + i, sd.concat(
-                    0,
+                    1,
                     in,
                     valueFunctions[i][0],
                     sd.math.cosineSimilarity(s2, valueFunctions[i][0], 1)));
@@ -173,37 +175,38 @@ public class Semeval {
                 sd.setLossVariables(valueFunctions[i][1]);
             }
         }
-        SDVariable predictions = sd.concat("output", 0, discrimators);
+        SDVariable predictions = sd.concat("output", 1, discrimators);
         if (!trainValue) {
             SDVariable loss = sd.loss.sigmoidCrossEntropy("loss", predictions, label, sd.constant(1));
             sd.setLossVariables(loss);
         }
         return sd;
     }
-    
+
     public static SDVariable discriminator(String prefix, SDVariable input) {
         //s2, a, s1, v, s2*v
         SameDiff sd = input.getSameDiff();
         int inputSize = 768 + 768 + 1 + 768 + 1;
-        if (input.getShape().length < 2 || input.getShape()[1] != inputSize) {
-            throw new IllegalArgumentException("bad input size for discriminator");
-        }
-        SDVariable w0 = sd.var(new XavierInitScheme('c', 768 + 1, 768), DataType.FLOAT, 768 + 1, 768);
+        SDVariable w0 = sd.var(new XavierInitScheme('c', inputSize, 768), DataType.FLOAT, inputSize, 768);
         SDVariable b0 = sd.zero(prefix + "_b0", 1, 768);
-        SDVariable w1 = sd.var(new XavierInitScheme('c', 768, 768), DataType.FLOAT, 768, 768);
-        SDVariable b1 = sd.zero(prefix + "_b1", 1, 768);
-        SDVariable w2 = sd.var(new XavierInitScheme('c', 768, 768), DataType.FLOAT, 768, 768);
-        SDVariable b2 = sd.zero(prefix + "_b2", 1, 768);
-        SDVariable output = sd.nn.sigmoid(prefix + "_output", sd.nn.relu(sd.nn.relu(input.mmul(w0).add(b0), 0).mmul(w1).add(b1), 0).mmul(w2).add(b2));
+        SDVariable w1 = sd.var(new XavierInitScheme('c', 768, 512), DataType.FLOAT, 768, 512);
+        SDVariable b1 = sd.zero(prefix + "_b1", 1, 512);
+        SDVariable w2 = sd.var(new XavierInitScheme('c', 512, 256), DataType.FLOAT, 768, 256);
+        SDVariable b2 = sd.zero(prefix + "_b2", 1, 256);
+        SDVariable w3 = sd.var(new XavierInitScheme('c', 256, 1), DataType.FLOAT, 256, 1);
+        SDVariable b3 = sd.zero(prefix + "_b3", 1, 1);
+        SDVariable output = sd.nn.sigmoid(prefix + "_output",
+                sd.nn.relu(
+                        sd.nn.relu(
+                                sd.nn.relu(input.mmul(w0).add(b0), 0)
+                                        .mmul(w1).add(b1), 0)
+                                .mmul(w2).add(b2), 0).mmul(w3).add(b3));
         return output;
     }
     //
 
     public static SDVariable[] valueFunction(String name, SDVariable input, SDVariable label) {
         int inputSize = 768 + 1;
-        if (input.getShape().length < 2 || input.getShape()[1] != inputSize) {
-            throw new IllegalArgumentException("bad input size for discriminator");
-        }
         SameDiff sd = input.getSameDiff();
         SDVariable w0 = sd.var(new XavierInitScheme('c', inputSize, 768), DataType.FLOAT, inputSize, 768);
         SDVariable b0 = sd.zero(UUID.randomUUID().toString(), 1, 768);
@@ -211,7 +214,7 @@ public class Semeval {
         SDVariable b1 = sd.zero(UUID.randomUUID().toString(), 1, 768);
         SDVariable w2 = sd.var(new XavierInitScheme('c', 768, 768), DataType.FLOAT, 768, 768);
         SDVariable b2 = sd.zero(UUID.randomUUID().toString(), 1, 768);
-        SDVariable output = sd.nn.relu(name, sd.nn.relu(input.mmul(w0).add(b0), 0).mmul(w1).add(b1), 0).mmul(w2).add("output", b2);
+        SDVariable output = sd.nn.relu(name, sd.nn.relu(input.mmul(w0).add(b0), 0).mmul(w1).add(b1), 0).mmul(w2).add(name+"_b2", b2);
         SDVariable diff = sd.math.squaredDifference(output, label);
         SDVariable lossMse = diff.mean();
         return new SDVariable[]{output, lossMse};
