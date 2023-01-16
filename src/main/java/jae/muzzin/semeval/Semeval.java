@@ -151,10 +151,10 @@ public class Semeval {
             System.out.println("fit");
             for (int e = 0; e < numEpochs; e++) {
                 try{
-                var h = nn.fit(new ViewIterator(trainData, Math.min(argIdsThisValueAffects.length, 100)), 1, new ScoreListener(1, true, true));
+                var h = nn.fit(new ViewIterator(trainData, Math.min(50, argIdsThisValueAffects.length-1)), 1, new ScoreListener(1, true, true));
                 if (e % 10 == 0 && e != 0) {
                     RegressionEvaluation evaluation = new RegressionEvaluation();
-                    nn.evaluate(new ViewIterator(trainData, 100), "value_" + fi, evaluation);
+                    nn.evaluate(new ViewIterator(trainData, Math.min(50, argIdsThisValueAffects.length-1)), "value_" + fi, evaluation);
                     //Print evaluation statistics:
                     System.out.println(evaluation.averageMeanSquaredError());
                 }
