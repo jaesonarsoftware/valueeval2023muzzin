@@ -145,13 +145,13 @@ public class Semeval {
                     training.get(NDArrayIndex.indices(argIdsThisValueAffects), NDArrayIndex.all()),
                     training.get(NDArrayIndex.indices(argIdsThisValueAffects), NDArrayIndex.interval(768, 768 * 2))
             );
-            nn.setLossVariables("value_" + i + "_loss");
-            System.out.println(nn.getLossVariables());
             //nn.clearOpInputs();
             //nn.clearPlaceholders(true);
+            nn.setLossVariables("value_" + i + "_loss");
             System.out.println("fit");
             for (int e = 0; e < numEpochs; e++) {
-                var h = nn.fit(new ViewIterator(trainData, 100), 1, new ScoreListener(1, true, true));
+                try{
+                var h = nn.fit(new ViewIterator(trainData, Math.min(argIdsThisValueAffects.length, 100)), 1, new ScoreListener(1, true, true));
                 if (e % 10 == 0 && e != 0) {
                     RegressionEvaluation evaluation = new RegressionEvaluation();
                     nn.evaluate(new ViewIterator(trainData, 100), "value_" + fi, evaluation);
@@ -161,7 +161,9 @@ public class Semeval {
                 //nn.getVariable("input").setArray(trainData.getFeatures());
                 //System.out.println(Arrays.toString(nn.getVariable("value_0").eval().shape()));
                 //System.out.println(nn.getVariable("value_0").eval().toStringFull());
-
+                }catch(Exception ex){
+                    System.out.println(ex.getMessage());
+                }
             }
         }
         nn.save(new File(path), true);
@@ -187,17 +189,16 @@ public class Semeval {
             label = sd.placeHolder("label", DataType.DOUBLE, -1, nOut);
         }
         SDVariable[] discrimators = new SDVariable[20];
-        SDVariable[] valueFunctions = new SDVariable[20];
 
         for (int i = 0; i < 20; i++) {
             SDVariable s1plusa = sd.concat(1, in.get(SDIndex.all(), SDIndex.interval(0, 768)), in.get(SDIndex.all(), SDIndex.interval(768 * 2, 768 * 2 + 1)));
             SDVariable s2 = in.get(SDIndex.all(), SDIndex.interval(768, 768 * 2));
-            valueFunctions[i] = valueFunction("value_" + i, s1plusa, label);
+            var valueFunction = valueFunction("value_" + i, s1plusa, label);
             discrimators[i] = discriminator("d_" + i, sd.concat(
                     1,
                     in,
-                    valueFunctions[i],
-                    sd.math.cosineSimilarity(s2, valueFunctions[i], 1)));
+                    valueFunction,
+                    sd.math.cosineSimilarity(s2, valueFunction, 1)));
         }
         SDVariable predictions = sd.concat("output", 1, discrimators);
         if (!trainValue) {
