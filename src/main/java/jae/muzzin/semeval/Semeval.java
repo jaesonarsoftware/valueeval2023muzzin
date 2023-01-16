@@ -1,5 +1,6 @@
 package jae.muzzin.semeval;
 
+import au.com.bytecode.opencsv.CSVReader;
 import com.robrua.nlp.bert.Bert;
 import java.io.File;
 import java.io.IOException;
@@ -17,8 +18,12 @@ import org.nd4j.linalg.factory.Nd4j;
 import org.nd4j.linalg.learning.config.Adam;
 import org.nd4j.weightinit.impl.XavierInitScheme;
 import de.siegmar.fastcsv.reader.NamedCsvReader;
+import de.siegmar.fastcsv.reader.CsvReader;
+import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.FileReader;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.function.IntSupplier;
 
 /**
@@ -30,7 +35,18 @@ public class Semeval {
     public static String path = "model.fb";
     
     public static void main(String[] args) throws IOException {
-        encodeDataset("arguments-training-short.tsv", "arguments-training.nd4j");
+        //encodeDataset("arguments-training-short.tsv", "arguments-training.nd4j");
+        CsvReader reader = CsvReader.builder()
+                .fieldSeparator('\t')
+                .build(new FileReader("labels-training.tsv"));
+        List<float[]> d = new ArrayList<>();
+        double[][] labels = reader.stream()
+                .map(row -> 
+                        IntStream.range(1, 21)
+                                .mapToDouble(i -> 
+                                        Double.parseDouble(row.getField(i))).toArray()
+                ).toList().toArray(new double[0][]);
+        trainValues(100, Nd4j.read(new FileInputStream("arguments-training.nd4j")), labels);
     }
     
     public static void encodeDataset(String path, String writePath) throws IOException {
@@ -94,14 +110,17 @@ public class Semeval {
         }
     }
     
-    public static void trainValues(int numEpochs, INDArray training, float[][] trainLabels) throws IOException {
+    public static void trainValues(int numEpochs, INDArray training, double[][] trainLabels) throws IOException {
         SameDiff nn;
         for (int i = 0; i < 20; i++) {
             final int fi = i;
             nn = initNetwork(true, 0, path);
+            int[] argIdsThisValueAffects = IntStream.range(0, trainLabels.length)
+                    .filter(j -> trainLabels[j][fi] > 0)
+                    .toArray();
             DataSet trainData = new DataSet(
-                    training.tensorAlongDimension(0, 0, 2),
-                    training.tensorAlongDimension(0, 1)
+                    training.tensorAlongDimension(0, 0, 2).tensorAlongDimension(1, argIdsThisValueAffects),
+                    training.tensorAlongDimension(0, 1).tensorAlongDimension(1, argIdsThisValueAffects)
             );
             double learningRate = 1e-3;
             TrainingConfig config = new TrainingConfig.Builder()
