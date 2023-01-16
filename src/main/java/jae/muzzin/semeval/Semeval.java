@@ -91,7 +91,7 @@ public class Semeval {
 
     public static void trainDiscriminator(int numEpochs, INDArray trainCSV, float[][] labels, INDArray testCSV, float[][] testLabels) throws IOException {
         SameDiff nn;
-        nn = initNetwork(false, 0, path);
+        nn = initNetwork(false, path);
         DataSet trainData = new DataSet(
                 trainCSV,
                 Nd4j.create(labels));
@@ -123,10 +123,10 @@ public class Semeval {
 
     public static void trainValues(int numEpochs, INDArray training, double[][] trainLabels) throws IOException {
         SameDiff nn;
+        nn = initNetwork(true, path);
         for (long i = 0; i < 20; i++) {
             System.out.println("Starting " + i);
             final long fi = i;
-            nn = initNetwork(true, (int) i, path);
             long[] argIdsThisValueAffects = LongStream.range(0, trainLabels.length)
                     .filter(j -> trainLabels[(int) j][(int) fi] > 0)
                     .toArray();
@@ -147,26 +147,29 @@ public class Semeval {
                     .build();
 
             nn.setTrainingConfig(config);
+            nn.setLossVariables("value_" + i + "_loss");
             System.out.println("fit");
             for (int e = 0; e < numEpochs; e++) {
-                var h = nn.fit(new ViewIterator(trainData, 10), 1, new ScoreListener(1, true, true));
-                RegressionEvaluation evaluation = new RegressionEvaluation();
-                nn.evaluate(new ViewIterator(trainData, 10), "value_0", evaluation);
-                //Print evaluation statistics:
-                System.out.println(evaluation.averageMeanSquaredError());
+                var h = nn.fit(new ViewIterator(trainData, 100), 1, new ScoreListener(1, true, true));
+                if (e % 10 == 0) {
+                    RegressionEvaluation evaluation = new RegressionEvaluation();
+                    nn.evaluate(new ViewIterator(trainData, 100), "value_0", evaluation);
+                    //Print evaluation statistics:
+                    System.out.println(evaluation.averageMeanSquaredError());
+                }
                 //nn.getVariable("input").setArray(trainData.getFeatures());
                 //System.out.println(Arrays.toString(nn.getVariable("value_0").eval().shape()));
                 //System.out.println(nn.getVariable("value_0").eval().toStringFull());
-                
+
             }
-            nn.save(new File(path), true);
         }
+        nn.save(new File(path), true);
     }
 
-    public static SameDiff initNetwork(boolean trainValue, int value, String path) throws IOException {
+    public static SameDiff initNetwork(boolean trainValue, String path) throws IOException {
 
         SameDiff sd = SameDiff.create();
-        if (!trainValue || value != 0) {
+        if (!trainValue) {
             File saveFileForInference = new File(path);
             sd = SameDiff.fromFlatFile(saveFileForInference);
             return sd;
@@ -183,7 +186,7 @@ public class Semeval {
             label = sd.placeHolder("label", DataType.DOUBLE, -1, nOut);
         }
         SDVariable[] discrimators = new SDVariable[20];
-        SDVariable[][] valueFunctions = new SDVariable[20][2];
+        SDVariable[] valueFunctions = new SDVariable[20];
 
         for (int i = 0; i < 20; i++) {
             SDVariable s1plusa = sd.concat(1, in.get(SDIndex.all(), SDIndex.interval(0, 768)), in.get(SDIndex.all(), SDIndex.interval(768 * 2, 768 * 2 + 1)));
@@ -192,11 +195,8 @@ public class Semeval {
             discrimators[i] = discriminator("d_" + i, sd.concat(
                     1,
                     in,
-                    valueFunctions[i][0],
-                    sd.math.cosineSimilarity(s2, valueFunctions[i][0], 1)));
-            if (trainValue && i == value) {
-                sd.setLossVariables(valueFunctions[i][1]);
-            }
+                    valueFunctions[i],
+                    sd.math.cosineSimilarity(s2, valueFunctions[i], 1)));
         }
         SDVariable predictions = sd.concat("output", 1, discrimators);
         if (!trainValue) {
@@ -225,7 +225,7 @@ public class Semeval {
     }
     //
 
-    public static SDVariable[] valueFunction(String name, SDVariable input, SDVariable label) {
+    public static SDVariable valueFunction(String name, SDVariable input, SDVariable label) {
         int inputSize = 768 + 1;
         SameDiff sd = input.getSameDiff();
         SDVariable w0 = sd.var(new XavierInitScheme('c', inputSize, 768), DataType.DOUBLE, inputSize, 768);
@@ -234,7 +234,7 @@ public class Semeval {
         SDVariable b1 = sd.zero(UUID.randomUUID().toString(), 1, 768);
         SDVariable output = sd.nn.sigmoid(name, sd.nn.relu(input.mmul(name + "_w0", w0).add(b0), 0).mmul(name + "_w1", w1).add(b1));
         //SDVariable output = sd.nn.sigmoid(name, sd.nn.relu(input.mmul(w0), 0));
-        SDVariable diff = sd.loss.meanSquaredError(label, output, null);
-        return new SDVariable[]{output, diff};
+        SDVariable diff = sd.loss.meanSquaredError(name + "_loss", label, output, null);
+        return output;
     }
 }
