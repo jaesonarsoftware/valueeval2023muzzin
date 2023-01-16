@@ -29,6 +29,7 @@ import org.deeplearning4j.datasets.iterator.utilty.ListDataSetIterator;
 import org.nd4j.autodiff.listeners.Listener;
 import org.nd4j.autodiff.listeners.impl.ScoreListener;
 import org.nd4j.linalg.dataset.ViewIterator;
+import org.nd4j.linalg.dataset.adapter.MultiDataSetIteratorAdapter;
 import org.nd4j.linalg.indexing.NDArrayIndex;
 
 /**
@@ -132,10 +133,7 @@ public class Semeval {
             System.out.println("Training " + training.shape()[0]);
             System.out.println("Labels " + trainLabels.length);
             DataSet trainData = new DataSet(
-                    Nd4j.concat(1,
-                            training.get(NDArrayIndex.indices(argIdsThisValueAffects), NDArrayIndex.interval(0, 768)),
-                            training.get(NDArrayIndex.indices(argIdsThisValueAffects), NDArrayIndex.point(1536))
-                    ),
+                    training.get(NDArrayIndex.indices(argIdsThisValueAffects), NDArrayIndex.all()),
                     training.get(NDArrayIndex.indices(argIdsThisValueAffects), NDArrayIndex.interval(768, 768 * 2))
             );
             System.out.println("Got training data");
@@ -149,7 +147,8 @@ public class Semeval {
             nn.setTrainingConfig(config);
             System.out.println("fit");
             for (int e = 0; e < numEpochs; e++) {
-                nn.fit(trainData, new ScoreListener(1, true, true));
+                var h = nn.fit(trainData, new ScoreListener(1, true, true));
+                System.out.println("epocs" + h.trainingEpochs());
             }
             nn.save(new File(path), true);
         }
@@ -161,17 +160,17 @@ public class Semeval {
         if (!trainValue || value != 0) {
             File saveFileForInference = new File(path);
             sd = SameDiff.fromFlatFile(saveFileForInference);
+            return sd;
         }
 
         SDVariable in;
         SDVariable label;
+        int nIn = 768 + 768 + 1;
+        in = sd.placeHolder("input", DataType.FLOAT, -1, nIn);
         if (trainValue) {
-            in = sd.placeHolder("input", DataType.FLOAT, -1, 768 + 1);
             label = sd.placeHolder("label", DataType.FLOAT, -1, 768);
         } else {
-            int nIn = 768 + 768 + 1;
             int nOut = 20;
-            in = sd.placeHolder("input", DataType.FLOAT, -1, nIn);
             label = sd.placeHolder("label", DataType.FLOAT, -1, nOut);
         }
         SDVariable[] discrimators = new SDVariable[20];
@@ -181,7 +180,7 @@ public class Semeval {
             SDVariable s1plusa = sd.concat(1, sd.slice(in, new int[]{0, 0}, 1, 768), sd.slice(in, new int[]{0, 768 * 2}, 1, 1));
             SDVariable s2 = sd.slice(in, new int[]{0, 768}, 1, 768);
             valueFunctions[i] = valueFunction("value_" + i, s1plusa,
-                    (trainValue && i == value) ? s2 : sd.constant(Nd4j.zeros(1, 768)));
+                    (trainValue && i == value) ? label : sd.constant(Nd4j.zeros(1, 768)));
             discrimators[i] = discriminator("d_" + i, sd.concat(
                     1,
                     in,
@@ -225,9 +224,8 @@ public class Semeval {
         SDVariable b0 = sd.zero(UUID.randomUUID().toString(), 1, 768);
         SDVariable w1 = sd.var(new XavierInitScheme('c', 768, 768), DataType.FLOAT, 768, 768);
         SDVariable b1 = sd.zero(UUID.randomUUID().toString(), 1, 768);
-        SDVariable output = sd.nn.relu(name, sd.nn.relu(input.mmul(w0).add(b0), 0).mmul(w1).add(b1), 0);
-        SDVariable diff = sd.math.squaredDifference(output, label);
-        SDVariable lossMse = diff.mean();
-        return new SDVariable[]{output, lossMse};
+        SDVariable output = sd.nn.sigmoid(name, sd.nn.relu(input.mmul(w0).add(b0), 0).mmul(w1).add(b1));
+        SDVariable diff = sd.loss.meanSquaredError(label, output, sd.constant(1));
+        return new SDVariable[]{output, diff};
     }
 }
