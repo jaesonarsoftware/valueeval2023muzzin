@@ -29,6 +29,7 @@ import org.deeplearning4j.datasets.iterator.utilty.ListDataSetIterator;
 import org.nd4j.autodiff.listeners.Listener;
 import org.nd4j.autodiff.listeners.impl.ScoreListener;
 import org.nd4j.autodiff.samediff.SDIndex;
+import org.nd4j.evaluation.regression.RegressionEvaluation;
 import org.nd4j.linalg.dataset.ViewIterator;
 import org.nd4j.linalg.dataset.adapter.MultiDataSetIteratorAdapter;
 import org.nd4j.linalg.indexing.NDArrayIndex;
@@ -148,14 +149,15 @@ public class Semeval {
             nn.setTrainingConfig(config);
             System.out.println("fit");
             for (int e = 0; e < numEpochs; e++) {
-                nn.getVariable("input").setArray(trainData.getFeatures());
-                //System.out.println(Arrays.toString(nn.getVariable("value_0").eval().shape()));
-                var h = nn.fit(trainData, new ScoreListener(1, true, true));
-                Evaluation evaluation = new Evaluation();
-                nn.evaluate(new ViewIterator(trainData,10), "value_0", evaluation);
-
+                var h = nn.fit(new ViewIterator(trainData, 10), 1, new ScoreListener(1, true, true));
+                RegressionEvaluation evaluation = new RegressionEvaluation();
+                nn.evaluate(new ViewIterator(trainData, 10), "value_0", evaluation);
                 //Print evaluation statistics:
-                System.out.println(evaluation.stats());
+                System.out.println(evaluation.averageMeanSquaredError());
+                //nn.getVariable("input").setArray(trainData.getFeatures());
+                //System.out.println(Arrays.toString(nn.getVariable("value_0").eval().shape()));
+                //System.out.println(nn.getVariable("value_0").eval().toStringFull());
+                
             }
             nn.save(new File(path), true);
         }
@@ -173,18 +175,18 @@ public class Semeval {
         SDVariable in;
         SDVariable label;
         int nIn = 768 + 768 + 1;
-        in = sd.placeHolder("input", DataType.FLOAT, -1, nIn);
+        in = sd.placeHolder("input", DataType.DOUBLE, -1, nIn);
         if (trainValue) {
-            label = sd.placeHolder("label", DataType.FLOAT, -1, 768);
+            label = sd.placeHolder("label", DataType.DOUBLE, -1, 768);
         } else {
             int nOut = 20;
-            label = sd.placeHolder("label", DataType.FLOAT, -1, nOut);
+            label = sd.placeHolder("label", DataType.DOUBLE, -1, nOut);
         }
         SDVariable[] discrimators = new SDVariable[20];
         SDVariable[][] valueFunctions = new SDVariable[20][2];
 
         for (int i = 0; i < 20; i++) {
-            SDVariable s1plusa = sd.concat(1, in.get(SDIndex.all(), SDIndex.interval(0, 768)), in.get(SDIndex.all(), SDIndex.interval(768 * 2, 768 * 2 +1)));
+            SDVariable s1plusa = sd.concat(1, in.get(SDIndex.all(), SDIndex.interval(0, 768)), in.get(SDIndex.all(), SDIndex.interval(768 * 2, 768 * 2 + 1)));
             SDVariable s2 = in.get(SDIndex.all(), SDIndex.interval(768, 768 * 2));
             valueFunctions[i] = valueFunction("value_" + i, s1plusa, label);
             discrimators[i] = discriminator("d_" + i, sd.concat(
@@ -208,11 +210,11 @@ public class Semeval {
         //s2, a, s1, v, s2*v
         SameDiff sd = input.getSameDiff();
         int inputSize = 768 + 768 + 1 + 768 + 1;
-        SDVariable w0 = sd.var(new XavierInitScheme('c', inputSize, 768), DataType.FLOAT, inputSize, 768);
+        SDVariable w0 = sd.var(new XavierInitScheme('c', inputSize, 768), DataType.DOUBLE, inputSize, 768);
         SDVariable b0 = sd.zero(prefix + "_b0", 1, 768);
-        SDVariable w1 = sd.var(new XavierInitScheme('c', 512, 256), DataType.FLOAT, 768, 256);
+        SDVariable w1 = sd.var(new XavierInitScheme('c', 512, 256), DataType.DOUBLE, 768, 256);
         SDVariable b1 = sd.zero(prefix + "_b1", 1, 256);
-        SDVariable w2 = sd.var(new XavierInitScheme('c', 256, 1), DataType.FLOAT, 256, 1);
+        SDVariable w2 = sd.var(new XavierInitScheme('c', 256, 1), DataType.DOUBLE, 256, 1);
         SDVariable b2 = sd.zero(prefix + "_b2", 1, 1);
         SDVariable output = sd.nn.sigmoid(prefix + "_output",
                 sd.nn.relu(
@@ -226,11 +228,11 @@ public class Semeval {
     public static SDVariable[] valueFunction(String name, SDVariable input, SDVariable label) {
         int inputSize = 768 + 1;
         SameDiff sd = input.getSameDiff();
-        SDVariable w0 = sd.var(new XavierInitScheme('c', inputSize, 768), DataType.FLOAT, inputSize, 768);
+        SDVariable w0 = sd.var(new XavierInitScheme('c', inputSize, 768), DataType.DOUBLE, inputSize, 768);
         SDVariable b0 = sd.zero(UUID.randomUUID().toString(), 1, 768);
-        SDVariable w1 = sd.var(new XavierInitScheme('c', 768, 768), DataType.FLOAT, 768, 768);
+        SDVariable w1 = sd.var(new XavierInitScheme('c', 768, 768), DataType.DOUBLE, 768, 768);
         SDVariable b1 = sd.zero(UUID.randomUUID().toString(), 1, 768);
-        SDVariable output = sd.nn.sigmoid(name, sd.nn.relu(input.mmul(name+"_w0",w0).add(b0), 0).mmul(name+"_w1", w1).add(b1));
+        SDVariable output = sd.nn.sigmoid(name, sd.nn.relu(input.mmul(name + "_w0", w0).add(b0), 0).mmul(name + "_w1", w1).add(b1));
         //SDVariable output = sd.nn.sigmoid(name, sd.nn.relu(input.mmul(w0), 0));
         SDVariable diff = sd.loss.meanSquaredError(label, output, null);
         return new SDVariable[]{output, diff};
