@@ -1,10 +1,8 @@
 package jae.muzzin.semeval;
 
-import au.com.bytecode.opencsv.CSVReader;
 import com.robrua.nlp.bert.Bert;
 import java.io.File;
 import java.io.IOException;
-import java.util.Arrays;
 import java.util.UUID;
 import java.util.stream.IntStream;
 import org.nd4j.autodiff.samediff.SameDiff;
@@ -23,8 +21,13 @@ import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.FileReader;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.function.IntSupplier;
+import org.deeplearning4j.datasets.iterator.utilty.ListDataSetIterator;
+import org.nd4j.autodiff.listeners.Listener;
+import org.nd4j.autodiff.listeners.impl.ScoreListener;
+import org.nd4j.linalg.dataset.ViewIterator;
 
 /**
  *
@@ -48,6 +51,7 @@ public class Semeval {
                         .mapToDouble(i
                                 -> Double.parseDouble(row.getField(i))).toArray()
                 ).toList().toArray(new double[0][]);
+        System.out.println("starting training");
         trainValues(100, Nd4j.read(new FileInputStream("arguments-training.nd4j")), labels);
     }
 
@@ -115,15 +119,19 @@ public class Semeval {
     public static void trainValues(int numEpochs, INDArray training, double[][] trainLabels) throws IOException {
         SameDiff nn;
         for (int i = 0; i < 20; i++) {
+            System.out.println("Starting " + i);
             final int fi = i;
             nn = initNetwork(true, 0, path);
             int[] argIdsThisValueAffects = IntStream.range(0, trainLabels.length)
                     .filter(j -> trainLabels[j][fi] > 0)
                     .toArray();
+
+            System.out.println("Found " + Arrays.toString(argIdsThisValueAffects));
             DataSet trainData = new DataSet(
                     training.tensorAlongDimension(0, 0, 2).tensorAlongDimension(1, argIdsThisValueAffects),
                     training.tensorAlongDimension(0, 1).tensorAlongDimension(1, argIdsThisValueAffects)
             );
+            System.out.println("Got training data");
             double learningRate = 1e-3;
             TrainingConfig config = new TrainingConfig.Builder()
                     .updater(new Adam(learningRate)) //Adam optimizer with specified learning rate
@@ -132,8 +140,9 @@ public class Semeval {
                     .build();
 
             nn.setTrainingConfig(config);
-            for (int epoch = 0; epoch < numEpochs; epoch++) {
-                nn.fit(trainData);
+            System.out.println("fit");
+            for (int e = 0; e < numEpochs; e++) {
+                nn.fit(trainData, new ScoreListener(1, true, true));
             }
             nn.save(new File(path), true);
         }
@@ -189,18 +198,15 @@ public class Semeval {
         int inputSize = 768 + 768 + 1 + 768 + 1;
         SDVariable w0 = sd.var(new XavierInitScheme('c', inputSize, 768), DataType.FLOAT, inputSize, 768);
         SDVariable b0 = sd.zero(prefix + "_b0", 1, 768);
-        SDVariable w1 = sd.var(new XavierInitScheme('c', 768, 512), DataType.FLOAT, 768, 512);
-        SDVariable b1 = sd.zero(prefix + "_b1", 1, 512);
-        SDVariable w2 = sd.var(new XavierInitScheme('c', 512, 256), DataType.FLOAT, 768, 256);
-        SDVariable b2 = sd.zero(prefix + "_b2", 1, 256);
-        SDVariable w3 = sd.var(new XavierInitScheme('c', 256, 1), DataType.FLOAT, 256, 1);
-        SDVariable b3 = sd.zero(prefix + "_b3", 1, 1);
+        SDVariable w1 = sd.var(new XavierInitScheme('c', 512, 256), DataType.FLOAT, 768, 256);
+        SDVariable b1 = sd.zero(prefix + "_b1", 1, 256);
+        SDVariable w2 = sd.var(new XavierInitScheme('c', 256, 1), DataType.FLOAT, 256, 1);
+        SDVariable b2 = sd.zero(prefix + "_b2", 1, 1);
         SDVariable output = sd.nn.sigmoid(prefix + "_output",
                 sd.nn.relu(
-                        sd.nn.relu(
-                                sd.nn.relu(input.mmul(w0).add(b0), 0)
-                                        .mmul(w1).add(b1), 0)
-                                .mmul(w2).add(b2), 0).mmul(w3).add(b3));
+                        sd.nn.relu(input.mmul(w0).add(b0), 0)
+                                .mmul(w1).add(b1), 0)
+                        .mmul(w2).add(b2));
         return output;
     }
     //
@@ -212,9 +218,7 @@ public class Semeval {
         SDVariable b0 = sd.zero(UUID.randomUUID().toString(), 1, 768);
         SDVariable w1 = sd.var(new XavierInitScheme('c', 768, 768), DataType.FLOAT, 768, 768);
         SDVariable b1 = sd.zero(UUID.randomUUID().toString(), 1, 768);
-        SDVariable w2 = sd.var(new XavierInitScheme('c', 768, 768), DataType.FLOAT, 768, 768);
-        SDVariable b2 = sd.zero(UUID.randomUUID().toString(), 1, 768);
-        SDVariable output = sd.nn.relu(name, sd.nn.relu(input.mmul(w0).add(b0), 0).mmul(w1).add(b1), 0).mmul(w2).add(name+"_b2", b2);
+        SDVariable output = sd.nn.relu(name, sd.nn.relu(input.mmul(w0).add(b0), 0).mmul(w1).add(b1), 0);
         SDVariable diff = sd.math.squaredDifference(output, label);
         SDVariable lossMse = diff.mean();
         return new SDVariable[]{output, lossMse};
