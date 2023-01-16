@@ -24,10 +24,12 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.function.IntSupplier;
+import java.util.stream.LongStream;
 import org.deeplearning4j.datasets.iterator.utilty.ListDataSetIterator;
 import org.nd4j.autodiff.listeners.Listener;
 import org.nd4j.autodiff.listeners.impl.ScoreListener;
 import org.nd4j.linalg.dataset.ViewIterator;
+import org.nd4j.linalg.indexing.NDArrayIndex;
 
 /**
  *
@@ -118,18 +120,18 @@ public class Semeval {
 
     public static void trainValues(int numEpochs, INDArray training, double[][] trainLabels) throws IOException {
         SameDiff nn;
-        for (int i = 0; i < 20; i++) {
+        for (long i = 0; i < 20; i++) {
             System.out.println("Starting " + i);
-            final int fi = i;
-            nn = initNetwork(true, 0, path);
-            int[] argIdsThisValueAffects = IntStream.range(0, trainLabels.length)
-                    .filter(j -> trainLabels[j][fi] > 0)
+            final long fi = i;
+            nn = initNetwork(true, (int)i, path);
+            long[] argIdsThisValueAffects = LongStream.range(0, trainLabels.length)
+                    .filter(j -> trainLabels[(int)j][(int)fi] > 0)
                     .toArray();
 
             System.out.println("Found " + Arrays.toString(argIdsThisValueAffects));
             DataSet trainData = new DataSet(
-                    training.tensorAlongDimension(0, 0, 2).tensorAlongDimension(1, argIdsThisValueAffects),
-                    training.tensorAlongDimension(0, 1).tensorAlongDimension(1, argIdsThisValueAffects)
+                    training.get(NDArrayIndex.indices(argIdsThisValueAffects),NDArrayIndex.indices(0, 2)),
+                    training.get(NDArrayIndex.indices(argIdsThisValueAffects),NDArrayIndex.indices(1))
             );
             System.out.println("Got training data");
             double learningRate = 1e-3;
