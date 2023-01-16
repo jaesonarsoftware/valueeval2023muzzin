@@ -124,6 +124,13 @@ public class Semeval {
     public static void trainValues(int numEpochs, INDArray training, double[][] trainLabels) throws IOException {
         SameDiff nn;
         nn = initNetwork(true, path);
+            double learningRate = 1e-3;
+        TrainingConfig config = new TrainingConfig.Builder()
+                .updater(new Adam(learningRate)) //Adam optimizer with specified learning rate
+                .dataSetFeatureMapping("input") //DataSet features array should be associated with variable "input"
+                .dataSetLabelMapping("label") //DataSet label array should be associated with variable "label"
+                .build();
+        nn.setTrainingConfig(config);
         for (long i = 0; i < 20; i++) {
             System.out.println("Starting " + i);
             final long fi = i;
@@ -138,22 +145,16 @@ public class Semeval {
                     training.get(NDArrayIndex.indices(argIdsThisValueAffects), NDArrayIndex.all()),
                     training.get(NDArrayIndex.indices(argIdsThisValueAffects), NDArrayIndex.interval(768, 768 * 2))
             );
-            System.out.println("Got training data");
-            double learningRate = 1e-3;
-            TrainingConfig config = new TrainingConfig.Builder()
-                    .updater(new Adam(learningRate)) //Adam optimizer with specified learning rate
-                    .dataSetFeatureMapping("input") //DataSet features array should be associated with variable "input"
-                    .dataSetLabelMapping("label") //DataSet label array should be associated with variable "label"
-                    .build();
-
-            nn.setTrainingConfig(config);
             nn.setLossVariables("value_" + i + "_loss");
+            System.out.println(nn.getLossVariables());
+            //nn.clearOpInputs();
+            //nn.clearPlaceholders(true);
             System.out.println("fit");
             for (int e = 0; e < numEpochs; e++) {
                 var h = nn.fit(new ViewIterator(trainData, 100), 1, new ScoreListener(1, true, true));
-                if (e % 10 == 0) {
+                if (e % 10 == 0 && e != 0) {
                     RegressionEvaluation evaluation = new RegressionEvaluation();
-                    nn.evaluate(new ViewIterator(trainData, 100), "value_0", evaluation);
+                    nn.evaluate(new ViewIterator(trainData, 100), "value_" + fi, evaluation);
                     //Print evaluation statistics:
                     System.out.println(evaluation.averageMeanSquaredError());
                 }
