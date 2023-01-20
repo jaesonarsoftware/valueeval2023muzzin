@@ -51,7 +51,7 @@ public class Semeval {
                                 -> Double.parseDouble(row.getField(i))).toArray()
                 ).toList().toArray(new double[0][]);
         System.out.println("starting training");
-        trainValues(3000, Nd4j.read(new FileInputStream("arguments-training.nd4j")), labels);
+        train(6000, Nd4j.read(new FileInputStream("arguments-training.nd4j")), labels);
     }
 
     public static void encodeDataset(String path, String writePath) throws IOException {
@@ -82,99 +82,65 @@ public class Semeval {
         }
     }
 
-    public static void trainDiscriminator(int numEpochs, INDArray trainCSV, float[][] labels, INDArray testCSV, float[][] testLabels) throws IOException {
-        SameDiff nn;
-        nn = initNetwork(false, path);
-        DataSet trainData = new DataSet(
-                trainCSV,
-                Nd4j.create(labels));
-        DataSet testData = new DataSet(
-                testCSV,
-                Nd4j.create(testLabels));
-        double learningRate = 1e-3;
-        TrainingConfig config = new TrainingConfig.Builder()
-                .updater(new Adam(learningRate)) //Adam optimizer with specified learning rate
-                .dataSetFeatureMapping("input") //DataSet features array should be associated with variable "input"
-                .dataSetLabelMapping("label") //DataSet label array should be associated with variable "label"
-                .build();
-
-        nn.setTrainingConfig(config);
-        Evaluation evaluation = new Evaluation();
-        nn.evaluate(testData.iterateWithMiniBatches(), "output", evaluation);
-        double score = evaluation.f1();
-        for (int epoch = 0; epoch < numEpochs; epoch++) {
-            nn.fit(trainData);
-            nn.evaluate(testData.iterateWithMiniBatches(), "output", evaluation);
-            if (evaluation.f1() > score) {
-                score = evaluation.f1();
-                //Print evaluation statistics:
-                System.out.println(evaluation.stats());
-                nn.save(new File(path), true);
-            }
-        }
-    }
-
-    public static void trainValues(int numEpochs, INDArray training, double[][] trainLabels) throws IOException {
+    public static void train(int numEpochs, INDArray training, double[][] trainLabels) throws IOException {
         SameDiff nn;
         if (new File(path).exists()) {
             nn = SameDiff.load(new File(path), true);
         } else {
             nn = initNetwork(true, path);
         }
-        double learningRate = .00005;
+        double learningRate = .001;
         TrainingConfig config = new TrainingConfig.Builder()
                 .updater(new Nadam(learningRate)) //Adam optimizer with specified learning rate
                 .dataSetFeatureMapping("input") //DataSet features array should be associated with variable "input"
                 .dataSetLabelMapping("label") //DataSet label array should be associated with variable "label"
                 .build();
         nn.setTrainingConfig(config);
-        for (long i = 0; i < 20; i++) {
-            System.out.println("Starting " + i);
-            final long fi = i;
-            long[] argIdsThisValueAffectsAll = LongStream.range(0, trainLabels.length)
-                    .filter(j -> trainLabels[(int) j][(int) fi] > 0)
-                    .toArray();
-            long[] trainingIds = Arrays.copyOfRange(argIdsThisValueAffectsAll, 0, (int) (argIdsThisValueAffectsAll.length * .8));
-            long[] testIds = Arrays.copyOfRange(argIdsThisValueAffectsAll, (int) (argIdsThisValueAffectsAll.length * .8), argIdsThisValueAffectsAll.length);
-            System.out.println("Found " + trainingIds.length + " matching rows");
-            System.out.println("Training " + training.shape()[0]);
-            System.out.println("Labels " + trainLabels.length);
-            DataSet trainData = new DataSet(
-                    training.get(NDArrayIndex.indices(trainingIds), NDArrayIndex.all()),
-                    training.get(NDArrayIndex.indices(trainingIds), NDArrayIndex.interval(768 * 2, 768 * 2 + 1))
-            );
-            DataSet testData = new DataSet(
-                    training.get(NDArrayIndex.indices(testIds), NDArrayIndex.all()),
-                    training.get(NDArrayIndex.indices(testIds), NDArrayIndex.interval(768 * 2, 768 * 2 + 1))
-            );
-            //nn.clearOpInputs();
-            //nn.clearPlaceholders(true);
-            nn.setLossVariables("value_" + i + "_loss");
-            System.out.println("fit");
-            double bestScore = Double.MAX_VALUE;
-            for (int e = 0; e < numEpochs; e++) {
-                try {
-                    var h = nn.fit(new ViewIterator(trainData, Math.min(100, trainingIds.length - 1)), 1, new ScoreListener(1, true, true));
-                    if (e % 500 == 0 && e > 0) {
-                        RegressionEvaluation evaluation = new RegressionEvaluation();
-                        nn.evaluate(new ViewIterator(trainData, Math.min(300, trainingIds.length - 1)), "value_" + fi, evaluation);
-                        System.out.println("Train score:" + evaluation.averageMeanAbsoluteError());
-                        evaluation.reset();
-                        nn.evaluate(new ViewIterator(testData, Math.min(300, testIds.length - 1)), "value_" + fi, evaluation);
-                        //Print evaluation statistics:
-                        System.out.println("Test score:" + evaluation.averageMeanAbsoluteError());
-                        if (evaluation.averageMeanAbsoluteError() < bestScore && e > 2000) {
-                            System.out.println("Best, saved it.");
-                            nn.save(new File(path), true);
-                            bestScore = evaluation.averageMeanAbsoluteError();
-                        }
+        System.out.println("Starting ");
+        long[] ids = LongStream.range(0, trainLabels.length)
+                .toArray();
+        long[] trainingIds = Arrays.copyOfRange(ids, 0, (int) (ids.length * .8));
+        long[] testIds = Arrays.copyOfRange(ids, (int) (ids.length * .8), ids.length);
+        System.out.println("Found " + trainingIds.length + " matching rows");
+        System.out.println("Training " + training.shape()[0]);
+        System.out.println("Labels " + trainLabels.length);
+        INDArray labelsArr = Nd4j.create(trainLabels);
+        DataSet trainData = new DataSet(
+                training.get(NDArrayIndex.indices(trainingIds), NDArrayIndex.all()),
+                labelsArr.get(NDArrayIndex.indices(trainingIds), NDArrayIndex.all())
+        );
+        DataSet testData = new DataSet(
+                training.get(NDArrayIndex.indices(testIds), NDArrayIndex.all()),
+                labelsArr.get(NDArrayIndex.indices(testIds), NDArrayIndex.all())
+        );
+        //nn.clearOpInputs();
+        //nn.clearPlaceholders(true);
+        System.out.println("fit");
+        double bestScore = Double.MAX_VALUE;
+        for (int e = 0; e < numEpochs; e++) {
+            try {
+                var h = nn.fit(new ViewIterator(trainData, Math.min(100, trainingIds.length - 1)), 1, new ScoreListener(1, true, true));
+                if (e % 200 == 0 && e > 0) {
+                    Evaluation evaluation = new Evaluation();
+                    nn.evaluate(new ViewIterator(trainData, Math.min(300, trainingIds.length - 1)), "output", evaluation);
+                    System.out.println("Train score:" + evaluation.f1());
+                    System.out.println(evaluation.stats());
+                    evaluation.reset();
+                    nn.evaluate(new ViewIterator(testData, Math.min(300, testIds.length - 1)), "output", evaluation);
+                    //Print evaluation statistics:
+                    System.out.println("Train score:" + evaluation.f1());
+                    System.out.println(evaluation.stats());
+                    if (evaluation.f1() < bestScore) {
+                        System.out.println("Best, saved it.");
+                        nn.save(new File(path), true);
+                        bestScore = evaluation.f1();
                     }
-                    //nn.getVariable("input").setArray(trainData.getFeatures());
-                    //System.out.println(Arrays.toString(nn.getVariable("value_0").eval().shape()));
-                    //System.out.println(nn.getVariable("value_0").eval().toStringFull());
-                } catch (Exception ex) {
-                    System.out.println(ex.getMessage());
                 }
+                //nn.getVariable("input").setArray(trainData.getFeatures());
+                //System.out.println(Arrays.toString(nn.getVariable("value_0").eval().shape()));
+                //System.out.println(nn.getVariable("value_0").eval().toStringFull());
+            } catch (Exception ex) {
+                System.out.println(ex.getMessage());
             }
         }
     }
@@ -198,17 +164,21 @@ public class Semeval {
             label = sd.placeHolder("label", DataType.DOUBLE, -1, nOut);
         }
         SDVariable[] discrimators = new SDVariable[20];
-
+        SDVariable a = in.get(SDIndex.all(), SDIndex.interval(768 * 2, 768 * 2 + 1));
         for (int i = 0; i < 20; i++) {
-            SDVariable s1s2 = in.get(SDIndex.all(),
-                    SDIndex.interval(0, 768 * 2));
-            SDVariable a = in.get(SDIndex.all(), SDIndex.interval(768 * 2, 768 * 2 + 1));
-            var valueFunction = valueFunction("value_" + i, s1s2, label);
-            discrimators[i] = discriminator("d_" + i, sd.concat(
-                    1,
-                    in,
-                    valueFunction,
-                    sd.math.abs(a.sub(valueFunction))));
+            SDVariable w0 = sd.var("w0", new XavierInitScheme('c', 1, 768), 1, 768);
+            SDVariable b0 = sd.zero("b0", 1, 768);
+            SDVariable aW0plusb0 = sd.nn.tanh(a.mmul(w0).add(b0));
+            SDVariable s1 = in.get(
+                    SDIndex.all(),
+                    SDIndex.interval(0, 768));
+            SDVariable s2 = in.get(SDIndex.all(),
+                    SDIndex.interval(768, 768 * 2));
+
+            SDVariable w1 = sd.var("w1", new XavierInitScheme('c', 768, 1), 768, 1);
+            SDVariable b1 = sd.zero("b0", 1, 1);
+            SDVariable reduced = sd.nn.sigmoid(s1.mmul(aW0plusb0).mmul(sd.transpose(s2)).mmul(w1).add(b1));
+            discrimators[i] = reduced;
         }
         SDVariable predictions = sd.concat("output", 1, discrimators);
         if (!trainValue) {
@@ -218,35 +188,4 @@ public class Semeval {
         return sd;
     }
 
-    public static SDVariable discriminator(String prefix, SDVariable input) {
-        //s2, a, s1, v, |a-v|
-        SameDiff sd = input.getSameDiff();
-        int inputSize = 768 + 768 + 1 + 1 + 1;
-        SDVariable w1 = sd.var(new XavierInitScheme('c', inputSize, 256), DataType.DOUBLE, inputSize, 256);
-        SDVariable b1 = sd.zero(prefix + "_b1", 1, 256);
-        SDVariable w2 = sd.var(new XavierInitScheme('c', 256, 1), DataType.DOUBLE, 256, 1);
-        SDVariable b2 = sd.zero(prefix + "_b2", 1, 1);
-        SDVariable output = sd.nn.sigmoid(prefix + "_output",
-                sd.nn.relu(
-                        input.mmul(w1).add(b1), 0)
-                        .mmul(w2).add(b2));
-        return output;
-    }
-
-    public static SDVariable valueFunction(String name, SDVariable input, SDVariable label) {
-        int inputSize = 768 * 2;
-        SameDiff sd = input.getSameDiff();
-        SDVariable w1 = sd.var(new XavierInitScheme('c', inputSize, 128), DataType.DOUBLE, inputSize, 128);
-        SDVariable b1 = sd.zero(UUID.randomUUID().toString(), 1, 128);
-        SDVariable w2 = sd.var(new XavierInitScheme('c', 128, 64), DataType.DOUBLE, 128, 64);
-        SDVariable b2 = sd.zero(UUID.randomUUID().toString(), 1, 64);
-        SDVariable w5 = sd.var(new XavierInitScheme('c', 64, 1), DataType.DOUBLE, 64, 1);
-        SDVariable b5 = sd.zero(UUID.randomUUID().toString(), 1, 1);
-        SDVariable output = sd.nn.tanh(name,
-                sd.nn.relu(sd.nn.relu(input.mmul(w1).add(b1), 0).mmul(w2).add(b2), 0).mmul(w5).add(b5)
-        );
-        //SDVariable output = sd.nn.sigmoid(name, sd.nn.relu(input.mmul(w0), 0));
-        SDVariable diff = sd.loss.absoluteDifference(name + "_loss", label, output, null);
-        return output;
-    }
 }
