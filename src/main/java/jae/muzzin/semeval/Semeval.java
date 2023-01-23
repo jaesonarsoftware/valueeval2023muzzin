@@ -8,7 +8,7 @@ import java.util.UUID;
 import org.nd4j.autodiff.samediff.SameDiff;
 import org.nd4j.autodiff.samediff.SDVariable;
 import org.nd4j.autodiff.samediff.TrainingConfig;
-import org.nd4j.evaluation.classification.Evaluation;
+import org.nd4j.evaluation.classification.EvaluationBinary;
 import org.nd4j.linalg.api.buffer.DataType;
 import org.nd4j.linalg.api.ndarray.INDArray;
 import org.nd4j.linalg.dataset.DataSet;
@@ -42,7 +42,6 @@ public class Semeval {
         CsvReader reader = CsvReader.builder()
                 .fieldSeparator('\t')
                 .build(new FileReader("labels-training.tsv"));
-        List<float[]> d = new ArrayList<>();
         double[][] labels = reader.stream()
                 .skip(1)
                 .map(row
@@ -87,9 +86,9 @@ public class Semeval {
         if (new File(path).exists()) {
             nn = SameDiff.load(new File(path), true);
         } else {
-            nn = initNetwork(true, path);
+            nn = initNetwork(path);
         }
-        double learningRate = .001;
+        double learningRate = .0000001;
         TrainingConfig config = new TrainingConfig.Builder()
                 .updater(new Nadam(learningRate)) //Adam optimizer with specified learning rate
                 .dataSetFeatureMapping("input") //DataSet features array should be associated with variable "input"
@@ -99,8 +98,8 @@ public class Semeval {
         System.out.println("Starting ");
         long[] ids = LongStream.range(0, trainLabels.length)
                 .toArray();
-        long[] trainingIds = Arrays.copyOfRange(ids, 0, (int) (ids.length * .8));
-        long[] testIds = Arrays.copyOfRange(ids, (int) (ids.length * .8), ids.length);
+        long[] trainingIds = Arrays.copyOfRange(ids, 0, (int) (ids.length * .92));
+        long[] testIds = Arrays.copyOfRange(ids, (int) (ids.length * .92), ids.length);
         System.out.println("Found " + trainingIds.length + " matching rows");
         System.out.println("Training " + training.shape()[0]);
         System.out.println("Labels " + trainLabels.length);
@@ -116,24 +115,26 @@ public class Semeval {
         //nn.clearOpInputs();
         //nn.clearPlaceholders(true);
         System.out.println("fit");
-        double bestScore = Double.MAX_VALUE;
+        double bestScore = 0;
         for (int e = 0; e < numEpochs; e++) {
             try {
-                var h = nn.fit(new ViewIterator(trainData, Math.min(100, trainingIds.length - 1)), 1, new ScoreListener(1, true, true));
-                if (e % 200 == 0 && e > 0) {
-                    Evaluation evaluation = new Evaluation();
-                    nn.evaluate(new ViewIterator(trainData, Math.min(300, trainingIds.length - 1)), "output", evaluation);
-                    System.out.println("Train score:" + evaluation.f1());
+                var h = nn.fit(new ViewIterator(trainData, Math.min(20, trainingIds.length - 1)), 1, new ScoreListener(1, true, true));
+                if (e % 10 == 0) {
+                    EvaluationBinary evaluation = new EvaluationBinary();
+                    nn.evaluate(new ViewIterator(trainData, Math.min(20, trainingIds.length - 1)), "output", evaluation);
+                    RegressionEvaluation reval = new RegressionEvaluation();
+                    nn.evaluate(new ViewIterator(trainData, Math.min(20, trainingIds.length - 1)), "output", reval);
+                    System.out.println("MAE:" + reval.averageMeanAbsoluteError());
+                    System.out.println("Train score:" + evaluation.averageF1());
                     System.out.println(evaluation.stats());
                     evaluation.reset();
-                    nn.evaluate(new ViewIterator(testData, Math.min(300, testIds.length - 1)), "output", evaluation);
-                    //Print evaluation statistics:
-                    System.out.println("Train score:" + evaluation.f1());
+                    nn.evaluate(new ViewIterator(testData, Math.min(20, testIds.length - 1)), "output", evaluation);
+                    System.out.println("Test score:" + evaluation.averageF1());
                     System.out.println(evaluation.stats());
-                    if (evaluation.f1() < bestScore) {
+                    if (evaluation.averageF1() > bestScore) {
                         System.out.println("Best, saved it.");
                         nn.save(new File(path), true);
-                        bestScore = evaluation.f1();
+                        bestScore = evaluation.averageF1();
                     }
                 }
                 //nn.getVariable("input").setArray(trainData.getFeatures());
@@ -145,46 +146,38 @@ public class Semeval {
         }
     }
 
-    public static SameDiff initNetwork(boolean trainValue, String path) throws IOException {
+    public static SameDiff initNetwork(String path) throws IOException {
         SameDiff sd = SameDiff.create();
-        if (!trainValue) {
-            File saveFileForInference = new File(path);
-            sd = SameDiff.fromFlatFile(saveFileForInference);
-            return sd;
-        }
 
         SDVariable in;
         SDVariable label;
         int nIn = 768 + 768 + 1;
         in = sd.placeHolder("input", DataType.DOUBLE, -1, nIn);
-        if (trainValue) {
-            label = sd.placeHolder("label", DataType.DOUBLE, -1, 768);
-        } else {
-            int nOut = 20;
-            label = sd.placeHolder("label", DataType.DOUBLE, -1, nOut);
-        }
-        SDVariable[] discrimators = new SDVariable[20];
-        SDVariable a = in.get(SDIndex.all(), SDIndex.interval(768 * 2, 768 * 2 + 1));
-        for (int i = 0; i < 20; i++) {
-            SDVariable w0 = sd.var("w0", new XavierInitScheme('c', 1, 768), 1, 768);
-            SDVariable b0 = sd.zero("b0", 1, 768);
-            SDVariable aW0plusb0 = sd.nn.tanh(a.mmul(w0).add(b0));
-            SDVariable s1 = in.get(
-                    SDIndex.all(),
-                    SDIndex.interval(0, 768));
-            SDVariable s2 = in.get(SDIndex.all(),
-                    SDIndex.interval(768, 768 * 2));
+        int nOut = 20;
+        label = sd.placeHolder("label", DataType.DOUBLE, -1, nOut);
+        int dq = 256;
+        int dv = 256;
+        var s1subs2 = in.get(SDIndex.all(), SDIndex.interval(0, 768)).sub(in.get(SDIndex.all(), SDIndex.interval(768, 768*2)));
+        var Wq = sd.var("Wq_", new XavierInitScheme('c', 768, dq), DataType.DOUBLE, 768, dq);
+        var Wk = sd.var("Wk_", new XavierInitScheme('c', 768, dq), DataType.DOUBLE, 768, dq);
+        var Wv = sd.var("Wv_", new XavierInitScheme('c', 768, dv), DataType.DOUBLE, 768, dv);
+        var W0 = sd.var("W0_", new XavierInitScheme('c', dv+1, 20), DataType.DOUBLE, dv+1, 20);
+        var b0 = sd.var("b0_", new XavierInitScheme('c', 1, 20), DataType.DOUBLE, 1, 20);
+        //var W1 = sd.var("W1_", new XavierInitScheme('c', 128, 20), DataType.DOUBLE, 128, 20);
+        //var b1 = sd.var("b1_", new XavierInitScheme('c', 1, 20), DataType.DOUBLE, 1, 20);
+        //xdq x dqxX x Xxdv = Xxdv
+        var attn
+                = //sd.nn.relu(
+                sd.concat(1, sd.nn.softmax(
+                        s1subs2.mmul(Wq).mmul(sd.transpose(s1subs2.mmul(Wk))).mul(1 / Math.sqrt(dq)), 0)
+                        .mmul(s1subs2.mmul(Wv)),
+                    in.get(SDIndex.all(), SDIndex.interval(768*2, 768*2+1)))
+                        .mmul(W0).add(b0);//, 0).mmul(W1).add(b1);
+        //attn is Xxdv
+        SDVariable reduced = sd.nn.sigmoid("output", attn);
 
-            SDVariable w1 = sd.var("w1", new XavierInitScheme('c', 768, 1), 768, 1);
-            SDVariable b1 = sd.zero("b0", 1, 1);
-            SDVariable reduced = sd.nn.sigmoid(s1.mmul(aW0plusb0).mmul(sd.transpose(s2)).mmul(w1).add(b1));
-            discrimators[i] = reduced;
-        }
-        SDVariable predictions = sd.concat("output", 1, discrimators);
-        if (!trainValue) {
-            SDVariable loss = sd.loss.sigmoidCrossEntropy("loss", predictions, label, null);
-            sd.setLossVariables(loss);
-        }
+        SDVariable loss = sd.loss.absoluteDifference("loss", reduced, label, null);
+        sd.setLossVariables(loss);
         return sd;
     }
 
